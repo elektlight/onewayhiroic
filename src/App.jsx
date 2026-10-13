@@ -8,16 +8,18 @@ import {
 } from 'firebase/auth';
 import { 
   getFirestore, 
+  collection, 
   doc, 
   setDoc, 
   getDoc, 
   onSnapshot, 
-  updateDoc 
+  updateDoc,
+  deleteDoc
 } from 'firebase/firestore';
 import { 
   Dices, Shield, Zap, Coins, Users, Lock, Eye, EyeOff, 
   Sparkles, BookOpen, Compass, ChevronRight, UserCheck, RefreshCw, 
-  Award, AlertTriangle, Sword, MessageSquare, Play, Trophy, MapPin, Search
+  Award, AlertTriangle, Sword, MessageSquare, Play, Trophy, MapPin, Search, LogOut, Trash2, CheckCircle2
 } from 'lucide-react';
 
 // Firebase Configuration Setup
@@ -281,10 +283,13 @@ export default function App() {
   const [roomId, setRoomId] = useState('');
   const [joinedRoom, setJoinedRoom] = useState(false);
   const [playerName, setPlayerName] = useState('');
+  const [roomName, setRoomName] = useState('');
   const [maxPlayers, setMaxPlayers] = useState(4);
   const [totalDays, setTotalDays] = useState(4);
 
   const [roomData, setRoomData] = useState(null);
+  const [availableRooms, setAvailableRooms] = useState([]);
+  const [selectedRoomId, setSelectedRoomId] = useState('');
 
   const [selectedQuestId, setSelectedQuestId] = useState(null);
   const [chatMessage, setChatMessage] = useState('');
@@ -309,6 +314,20 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
+  // 公開ルーム一覧をリアルタイム購読
+  useEffect(() => {
+    if (!user) return;
+    const roomsRef = collection(db, 'artifacts', appId, 'public', 'data', 'rooms');
+    const unsubscribe = onSnapshot(roomsRef, (snapshot) => {
+      const rooms = snapshot.docs.map((item) => ({ ...item.data(), roomId: item.id }))
+        .filter((room) => room.phase === 'lobby' || room.phase === 'playing')
+        .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+      setAvailableRooms(rooms);
+      setSelectedRoomId((current) => current && rooms.some((room) => room.roomId === current) ? current : '');
+    }, (error) => console.error('Room list sync error:', error));
+    return () => unsubscribe();
+  }, [user]);
+
   useEffect(() => {
     if (!user || !joinedRoom || !roomId) return;
 
@@ -317,8 +336,14 @@ export default function App() {
       if (snapshot.exists()) {
         const data = snapshot.data();
         setRoomData(data);
-        
         setSelectedQuestId(data.players?.[user.uid]?.questId ?? null);
+      } else {
+        // ホストが部屋を削除した場合、参加者側もロビーへ戻す
+        setJoinedRoom(false);
+        setRoomData(null);
+        setRoomId('');
+        setSelectedRoomId('');
+        setActiveTab('board');
       }
     }, (error) => {
       console.error("Room sync error:", error);
@@ -356,8 +381,10 @@ export default function App() {
       initialEvents[d] = generateDayEvents(d, initialTerrains[d]);
     }
 
+    const resolvedRoomName = roomName.trim() || `冒険の部屋 ${newRoomId}`;
     const newRoomState = {
       roomId: newRoomId,
+      roomName: resolvedRoomName,
       hostId: user.uid,
       maxPlayers: Number(maxPlayers),
       totalDays: daysNum,
@@ -375,7 +402,7 @@ export default function App() {
         }
       },
       logs: [
-        { id: Date.now(), sender: 'システム', text: `ルーム [${newRoomId}] が作成されました。`, time: new Date().toLocaleTimeString() }
+        { id: Date.now(), sender: 'システム', text: `ルーム「${resolvedRoomName}」[${newRoomId}] が作成されました。`, time: new Date().toLocaleTimeString() }
       ]
     };
 
@@ -385,10 +412,71 @@ export default function App() {
     setJoinedRoom(true);
   };
 
+  const handleLeaveRoom = async () => {
+    if (!roomId || !user || !roomData) return;
+    if (!window.confirm('この冒険の部屋から退室しますか？')) return;
+
+    const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomId);
+    try {
+      const latestSnap = await getDoc(roomRef);
+      if (latestSnap.exists()) {
+        const latest = latestSnap.data();
+        const players = { ...(latest.players || {}) };
+        delete players[user.uid];
+        const remainingIds = Object.keys(players);
+
+        if (remainingIds.length === 0) {
+          await deleteDoc(roomRef);
+        } else {
+          const nextHostId = latest.hostId === user.uid ? remainingIds[0] : latest.hostId;
+          const leavingName = latest.players?.[user.uid]?.name || playerName || 'プレイヤー';
+          const logs = [...(latest.logs || []), {
+            id: Date.now(), sender: 'システム',
+            text: `${leavingName} さんが退室しました。${latest.hostId === user.uid ? ` ${players[nextHostId]?.name || '別の参加者'} さんがホストを引き継ぎました。` : ''}`,
+            time: new Date().toLocaleTimeString()
+          }];
+          await updateDoc(roomRef, { players, hostId: nextHostId, logs, updatedAt: Date.now() });
+        }
+      }
+      setJoinedRoom(false);
+      setRoomData(null);
+      setRoomId('');
+      setSelectedRoomId('');
+      setActiveTab('board');
+    } catch (error) {
+      console.error('Leave room error:', error);
+      alert('退室に失敗しました。通信状態やFirestoreの権限を確認してください。');
+    }
+  };
+
+  const handleDeleteRoom = async (targetRoomId = roomId) => {
+    if (!targetRoomId || !user) return;
+    const targetRoom = targetRoomId === roomId ? roomData : availableRooms.find((room) => room.roomId === targetRoomId);
+    if (!targetRoom || targetRoom.hostId !== user.uid) {
+      alert('部屋を削除できるのはホストのみです。');
+      return;
+    }
+    if (!window.confirm(`部屋「${targetRoom.roomName || `冒険の部屋 ${targetRoomId}`}」を削除しますか？\n参加者全員が利用できなくなります。この操作は取り消せません。`)) return;
+
+    try {
+      await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', targetRoomId));
+      if (targetRoomId === roomId) {
+        setJoinedRoom(false);
+        setRoomData(null);
+        setRoomId('');
+        setSelectedRoomId('');
+        setActiveTab('board');
+      }
+    } catch (error) {
+      console.error('Delete room error:', error);
+      alert(`部屋の削除に失敗しました。\nエラーコード: ${error.code || '不明'}\n詳細: ${error.message || '詳細情報はありません'}\nFirestoreのセキュリティルールとホスト権限を確認してください。`);
+    }
+  };
+
   const handleJoinRoom = async () => {
     if (!playerName.trim()) return alert("プレイヤー名を入力してください");
-    if (!roomId.trim()) return alert("ルームIDを入力してください");
-    const targetRoomId = roomId.toUpperCase();
+    if (!selectedRoomId) return alert("参加する部屋を一覧から選択してください");
+    const targetRoomId = selectedRoomId;
 
     const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', targetRoomId);
     const docSnap = await getDoc(roomRef);
@@ -462,23 +550,18 @@ export default function App() {
 
   const handleRevealEvent = async (day, position) => {
     if (!roomData || !user) return;
-    const targetDayEvents = roomData.events[day];
-    if (!targetDayEvents || !targetDayEvents[position]) return;
-
-    if (targetDayEvents[position].isRevealed) return;
+    const targetDayEvents = roomData.events?.[day];
+    const targetEvent = targetDayEvents?.[position];
+    if (!targetEvent || targetEvent.isRevealed) return;
 
     const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomId);
-    const player = roomData.players[user.uid];
-
+    const player = roomData.players?.[user.uid];
+    const playerName = player?.name || 'プレイヤー';
     const updatedEvents = {
       ...roomData.events,
       [day]: {
         ...targetDayEvents,
-        [position]: {
-          ...targetDayEvents[position],
-          isRevealed: true,
-          revealedBy: player.name
-        }
+        [position]: { ...targetEvent, isRevealed: true, revealedBy: playerName }
       }
     };
 
@@ -486,13 +569,79 @@ export default function App() {
     const newLog = {
       id: Date.now(),
       sender: '探索',
-      text: `${player.name} が【${day}日目・${posLabel}エリア】のイベント『${targetDayEvents[position].category}：${targetDayEvents[position].title}』を公開しました！`,
+      text: `${playerName} が【${day}日目・${posLabel}エリア】のイベント『${targetEvent.category}：${targetEvent.title}』を公開しました！`,
       time: new Date().toLocaleTimeString()
     };
 
     await updateDoc(roomRef, {
       events: updatedEvents,
-      logs: [...(roomData.logs || []), newLog]
+      logs: [...(roomData.logs || []), newLog],
+      updatedAt: Date.now()
+    });
+  };
+
+  const handleHideEvent = async (day, position) => {
+    if (!roomData || !user) return;
+    const targetDayEvents = roomData.events?.[day];
+    const targetEvent = targetDayEvents?.[position];
+    if (!targetEvent || !targetEvent.isRevealed) return;
+
+    const posLabel = position === 'north' ? '北' : position === 'center' ? '中央' : '南';
+    if (!window.confirm(`【${day}日目・${posLabel}エリア】のイベントを非公開に戻しますか？`)) return;
+
+    const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomId);
+    const player = roomData.players?.[user.uid];
+    const playerName = player?.name || 'プレイヤー';
+    const updatedEvents = {
+      ...roomData.events,
+      [day]: {
+        ...targetDayEvents,
+        [position]: { ...targetEvent, isRevealed: false, revealedBy: null }
+      }
+    };
+    const newLog = {
+      id: Date.now(),
+      sender: '探索',
+      text: `${playerName} が【${day}日目・${posLabel}エリア】のイベント『${targetEvent.category}：${targetEvent.title}』を非公開に戻しました。`,
+      time: new Date().toLocaleTimeString()
+    };
+
+    await updateDoc(roomRef, {
+      events: updatedEvents,
+      logs: [...(roomData.logs || []), newLog],
+      updatedAt: Date.now()
+    });
+  };
+
+  const handleRerollEvent = async (day, position) => {
+    if (!roomData || !user) return;
+    const targetDayEvents = roomData.events?.[day];
+    const targetEvent = targetDayEvents?.[position];
+    if (!targetEvent) return;
+
+    const posLabel = position === 'north' ? '北' : position === 'center' ? '中央' : '南';
+    if (!window.confirm(`【${day}日目・${posLabel}エリア】のイベントを再決定しますか？\n現在のイベント内容は新しい結果に置き換わります。`)) return;
+
+    const terrain = roomData.terrains?.[day] || '草原';
+    const newEvent = generateOneEvent(Number(day), terrain);
+    const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomId);
+    const player = roomData.players?.[user.uid];
+    const playerName = player?.name || 'プレイヤー';
+    const updatedEvents = {
+      ...roomData.events,
+      [day]: { ...targetDayEvents, [position]: newEvent }
+    };
+    const newLog = {
+      id: Date.now(),
+      sender: '探索',
+      text: `${playerName} が【${day}日目・${posLabel}エリア】のイベントを再決定しました（${targetEvent.title} → ${newEvent.title}）。`,
+      time: new Date().toLocaleTimeString()
+    };
+
+    await updateDoc(roomRef, {
+      events: updatedEvents,
+      logs: [...(roomData.logs || []), newLog],
+      updatedAt: Date.now()
     });
   };
 
@@ -550,82 +699,106 @@ export default function App() {
 
   if (!joinedRoom || !roomData) {
     return (
-      <div className="min-h-screen bg-stone-950 text-amber-100 font-serif flex items-center justify-center p-4">
-        <div className="max-w-md w-full bg-stone-900 border-2 border-amber-600/60 rounded-xl p-6 shadow-2xl space-y-6 relative overflow-hidden">
-          <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-amber-600 via-yellow-400 to-amber-600"></div>
-          
-          <div className="text-center space-y-2">
-            <h1 className="text-3xl font-bold tracking-widest text-amber-400 drop-shadow flex items-center justify-center gap-2">
-              <Sword className="w-8 h-8 text-amber-500" />
-              片道勇者 TRPG
-            </h1>
-            <p className="text-xs text-stone-400">GMレス・リアルタイムセッションシステム</p>
-          </div>
-
-          <div className="space-y-4 text-sm">
-            <div>
-              <label className="block text-amber-300 mb-1 font-semibold">プレイヤー名</label>
-              <input 
-                type="text" 
-                value={playerName} 
-                onChange={(e) => setPlayerName(e.target.value)}
-                placeholder="例: 勇者オルフェ" 
-                className="w-full bg-stone-950 border border-stone-700 rounded p-2 text-stone-200 focus:outline-none focus:border-amber-500"
-              />
+      <div className="min-h-screen text-stone-800 p-4 md:p-8" style={{background:'linear-gradient(135deg,#e8e2ce 0%,#f7f3e8 48%,#d8dfc9 100%)'}}>
+        <div className="max-w-5xl mx-auto">
+          <header className="text-center py-8 md:py-12">
+            <div className="inline-flex items-center justify-center rounded-full border-2 border-emerald-900/30 bg-emerald-950 text-amber-100 w-16 h-16 mb-4 shadow-lg">
+              <Sword className="w-8 h-8" />
             </div>
+            <p className="text-xs tracking-[0.35em] uppercase text-emerald-900/70 mb-2">One Way Heroes · Online Table</p>
+            <h1 className="text-4xl md:text-5xl font-black tracking-wide text-emerald-950">片道勇者 TRPG</h1>
+            <p className="mt-4 text-sm md:text-base text-stone-600">イベント・地形ランダム決定ツール</p>
+          </header>
 
-            <div className="pt-2 border-t border-stone-800 grid grid-cols-2 gap-3">
-              <button 
-                onClick={handleCreateRoom}
-                className="bg-gradient-to-r from-amber-700 to-amber-900 hover:from-amber-600 hover:to-amber-800 text-amber-100 font-bold py-2 px-4 rounded border border-amber-500/50 shadow transition"
-              >
-                新しい部屋を作成
+          <div className="grid lg:grid-cols-[0.85fr_1.15fr] gap-5 items-start">
+            <section className="bg-white/80 backdrop-blur rounded-2xl border border-emerald-950/15 p-5 md:p-6 shadow-xl">
+              <div className="flex items-center gap-2 mb-5">
+                <Sparkles className="w-5 h-5 text-amber-700" />
+                <h2 className="text-xl font-bold text-emerald-950">冒険の準備</h2>
+              </div>
+              <label className="block text-sm font-bold text-stone-600 mb-2">プレイヤー名</label>
+              <input type="text" value={playerName} onChange={(e) => setPlayerName(e.target.value)}
+                placeholder="例：勇者オルフェ" maxLength={30}
+                className="w-full bg-stone-50 border border-stone-300 rounded-xl p-3 text-stone-800 outline-none focus:ring-2 focus:ring-emerald-700 mb-4" />
+              <label className="block text-sm font-bold text-stone-600 mb-2">ルーム名</label>
+              <input type="text" value={roomName} onChange={(e) => setRoomName(e.target.value)}
+                placeholder="例：はじめての片道勇者／金曜夜の冒険" maxLength={40}
+                className="w-full bg-stone-50 border border-stone-300 rounded-xl p-3 text-stone-800 outline-none focus:ring-2 focus:ring-emerald-700 mb-2" />
+              <p className="text-xs text-stone-500 mb-5">未入力の場合は、自動で「冒険の部屋 ＋部屋コード」という名前になります。</p>
+              <div className="grid grid-cols-2 gap-3 mb-5">
+                <div>
+                  <label className="block text-xs font-bold text-stone-500 mb-1">最大人数</label>
+                  <select value={maxPlayers} onChange={(e) => setMaxPlayers(e.target.value)} className="w-full bg-stone-50 border border-stone-300 rounded-lg p-2.5">
+                    {[1,2,3,4,5].map(n => <option key={n} value={n}>{n} 人</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-stone-500 mb-1">冒険日数</label>
+                  <select value={totalDays} onChange={(e) => setTotalDays(e.target.value)} className="w-full bg-stone-50 border border-stone-300 rounded-lg p-2.5">
+                    {[2,4,6].map(d => <option key={d} value={d}>{d} 日間</option>)}
+                  </select>
+                </div>
+              </div>
+              <button onClick={handleCreateRoom} className="w-full flex items-center justify-center gap-2 bg-emerald-900 hover:bg-emerald-800 text-amber-50 font-bold py-3 px-4 rounded-xl shadow-md transition">
+                <Play className="w-4 h-4" /> 新しい冒険を始める
               </button>
-              <div className="space-y-1">
-                <input 
-                  type="text" 
-                  value={roomId} 
-                  onChange={(e) => setRoomId(e.target.value)}
-                  placeholder="ルームID" 
-                  className="w-full bg-stone-950 border border-stone-700 rounded p-2 text-stone-200 uppercase text-center font-mono focus:outline-none focus:border-amber-500 text-xs"
-                />
-                <button 
-                  onClick={handleJoinRoom}
-                  className="w-full bg-stone-800 hover:bg-stone-700 text-amber-200 font-bold py-1.5 px-3 rounded border border-stone-600 text-xs transition"
-                >
-                  既存の部屋に参加
-                </button>
-              </div>
-            </div>
+              <p className="text-xs text-stone-500 mt-3 leading-relaxed">部屋を作成すると、一覧に表示されます。参加者は一覧から部屋を選んで入室できます。</p>
+            </section>
 
-            <div className="bg-stone-950/60 p-3 rounded border border-stone-800 space-y-2">
-              <p className="text-xs font-bold text-amber-400 flex items-center gap-1">
-                <Compass className="w-4 h-4" /> ルーム設定 (作成時のみ有効)
-              </p>
-              <div className="grid grid-cols-2 gap-2 text-xs">
+            <section className="bg-white/80 backdrop-blur rounded-2xl border border-emerald-950/15 p-5 md:p-6 shadow-xl">
+              <div className="flex items-center justify-between gap-3 mb-4">
                 <div>
-                  <label className="text-stone-400 block">最大人数</label>
-                  <select 
-                    value={maxPlayers} 
-                    onChange={(e) => setMaxPlayers(e.target.value)}
-                    className="w-full bg-stone-900 border border-stone-700 rounded p-1 text-stone-200"
-                  >
-                    {[1, 2, 3, 4, 5].map(n => <option key={n} value={n}>{n} 人</option>)}
-                  </select>
+                  <h2 className="text-xl font-bold text-emerald-950">公開中の冒険</h2>
+                  <p className="text-xs text-stone-500 mt-1">参加したい部屋を選択してください</p>
                 </div>
-                <div>
-                  <label className="text-stone-400 block">冒険日数</label>
-                  <select 
-                    value={totalDays} 
-                    onChange={(e) => setTotalDays(e.target.value)}
-                    className="w-full bg-stone-900 border border-stone-700 rounded p-1 text-stone-200"
-                  >
-                    {[2, 4, 6].map(d => <option key={d} value={d}>{d} 日間</option>)}
-                  </select>
-                </div>
+                <span className="text-xs rounded-full bg-emerald-100 text-emerald-900 px-3 py-1">{availableRooms.length} 部屋</span>
               </div>
-            </div>
+              {availableRooms.length === 0 ? (
+                <div className="text-center rounded-xl border border-dashed border-stone-300 bg-stone-50 p-8">
+                  <Compass className="w-8 h-8 mx-auto text-stone-400 mb-3" />
+                  <p className="font-bold text-stone-600">現在、参加できる部屋はありません</p>
+                  <p className="text-xs text-stone-500 mt-2">新しい部屋を作成すると、ここに表示されます。</p>
+                </div>
+              ) : (
+                <div className="space-y-3 max-h-[430px] overflow-y-auto pr-1">
+                  {availableRooms.map((room) => {
+                    const count = Object.keys(room.players || {}).length;
+                    const full = count >= Number(room.maxPlayers || 4);
+                    const selected = selectedRoomId === room.roomId;
+                    return <div key={room.roomId} className={`rounded-xl transition ${selected ? 'bg-emerald-100/70 ring-2 ring-amber-500 ring-offset-2 ring-offset-white shadow-lg' : ''}`}>
+                      <button type="button" disabled={full} onClick={() => setSelectedRoomId(room.roomId)}
+                        aria-pressed={selected}
+                        className={`w-full text-left rounded-xl border-2 p-4 transition ${selected ? 'border-emerald-900 bg-emerald-50' : 'border-stone-200 bg-white hover:border-emerald-700'} ${full ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex items-start gap-3">
+                            <span className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 ${selected ? 'border-emerald-800 bg-emerald-800 text-white' : 'border-stone-300 bg-white text-transparent'}`}>
+                              <CheckCircle2 className="w-4 h-4" />
+                            </span>
+                            <div>
+                              <div className="font-bold text-emerald-950">{room.roomName || `冒険の部屋 ${room.roomId}`}</div>
+                              <div className="text-xs text-stone-500 mt-1">部屋コード：{room.roomId}</div>
+                            </div>
+                          </div>
+                          <span className={`shrink-0 text-xs font-bold rounded-full px-2.5 py-1 ${full ? 'bg-rose-100 text-rose-800' : 'bg-emerald-100 text-emerald-900'}`}>{full ? '満員' : '参加可能'}</span>
+                        </div>
+                        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-stone-600 mt-3 pl-9">
+                          <span className="inline-flex items-center gap-1"><Users className="w-3.5 h-3.5" /> {count}/{room.maxPlayers || 4} 人</span>
+                          <span>{room.totalDays || 4} 日間の冒険</span>
+                          <span>{room.phase === 'playing' ? '冒険中' : '参加者募集中'}</span>
+                        </div>
+                        {selected && <div className="mt-3 ml-9 inline-flex items-center gap-1 rounded-full bg-emerald-900 px-3 py-1 text-xs font-extrabold text-amber-100"><CheckCircle2 className="w-3.5 h-3.5" /> 入室対象に選択中</div>}
+                      </button>
+                      {room.hostId === user?.uid && <button type="button" onClick={() => handleDeleteRoom(room.roomId)} className="mt-2 inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-bold text-rose-700 hover:bg-rose-100"><Trash2 className="w-3.5 h-3.5" /> この部屋を削除</button>}
+                    </div>;
+                  })}
+                </div>
+              )}
+              <button onClick={handleJoinRoom} disabled={!selectedRoomId || (() => { const selected = availableRooms.find((r) => r.roomId === selectedRoomId); return !selected || Object.keys(selected.players || {}).length >= Number(selected.maxPlayers || 4); })()} className="w-full mt-4 bg-amber-700 hover:bg-amber-600 disabled:bg-stone-300 disabled:text-stone-500 text-white font-bold py-3 rounded-xl transition">
+                {selectedRoomId ? '✓ 選択した部屋に参加する' : 'まず参加する部屋を選択してください'}
+              </button>
+            </section>
           </div>
+          <p className="text-center text-xs text-stone-500 mt-8">※削除できるのは自分が立てた部屋のみ</p>
         </div>
       </div>
     );
@@ -652,8 +825,8 @@ export default function App() {
             <Sword className="w-5 h-5 text-amber-500" />
             片道勇者TRPG
           </h1>
-          <span className="bg-stone-800 border border-stone-700 px-2 py-0.5 rounded text-xs font-mono text-amber-300">
-            ROOM: {roomData.roomId}
+          <span className="bg-stone-800 border border-stone-700 px-3 py-1 rounded text-xs font-mono text-amber-300" title={`ルームID: ${roomData.roomId}`}>
+            {roomData.roomName || `冒険の部屋 ${roomData.roomId}`} ({roomData.roomId})
           </span>
         </div>
 
@@ -671,6 +844,14 @@ export default function App() {
               次の日へ進む <ChevronRight className="w-4 h-4" />
             </button>
           )}
+          {user.uid === roomData.hostId && (
+            <button onClick={() => handleDeleteRoom(roomId)} className="bg-rose-950 hover:bg-rose-900 text-rose-100 font-bold px-3 py-1 rounded flex items-center gap-1 border border-rose-700 shadow transition">
+              <Trash2 className="w-4 h-4" /> 部屋を削除
+            </button>
+          )}
+          <button onClick={handleLeaveRoom} className="bg-stone-800 hover:bg-stone-700 text-stone-100 font-bold px-3 py-1 rounded flex items-center gap-1 border border-stone-600 shadow transition">
+            <LogOut className="w-4 h-4" /> 退室
+          </button>
         </div>
       </header>
 
@@ -796,6 +977,15 @@ export default function App() {
                                     >
                                       イベントを公開する
                                     </button>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleRerollEvent(day, pos);
+                                      }}
+                                      className="bg-sky-900 hover:bg-sky-800 text-sky-100 text-xs font-bold px-3 py-1.5 rounded border border-sky-700 shadow transition w-full"
+                                    >
+                                      <RefreshCw className="w-3 h-3 inline mr-1" />イベントを再決定
+                                    </button>
                                   </div>
                                 )
                               ) : (
@@ -804,8 +994,30 @@ export default function App() {
                             </div>
 
                             {ev?.isRevealed && (
-                              <div className="text-[10px] text-emerald-400 text-right mt-1 font-sans font-semibold">
-                                ✓ {ev.revealedBy} 公開
+                              <div className="mt-2 space-y-1.5">
+                                <div className="text-[10px] text-emerald-400 text-right font-sans font-semibold">
+                                  ✓ {ev.revealedBy} 公開
+                                </div>
+                                <div className="grid grid-cols-2 gap-1.5">
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleHideEvent(day, pos);
+                                    }}
+                                    className="bg-stone-700 hover:bg-stone-600 text-stone-100 text-[10px] font-bold px-2 py-1.5 rounded border border-stone-500 transition"
+                                  >
+                                    <EyeOff className="w-3 h-3 inline mr-1" />非公開に戻す
+                                  </button>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleRerollEvent(day, pos);
+                                    }}
+                                    className="bg-sky-900 hover:bg-sky-800 text-sky-100 text-[10px] font-bold px-2 py-1.5 rounded border border-sky-700 transition"
+                                  >
+                                    <RefreshCw className="w-3 h-3 inline mr-1" />再決定
+                                  </button>
+                                </div>
                               </div>
                             )}
                           </div>
