@@ -1101,7 +1101,7 @@ export default function App() {
                       <div className="flex items-start justify-between gap-3 border-b border-stone-700 pb-3">
                         <div>
                           <p className="text-xs text-stone-500">クエストカード #{selectedQuest.id}</p>
-                          <h3 className="text-xl font-bold text-amber-300">{selectedQuest.name}</h3>
+                          <h3 className="inline-block mt-1 rounded-md px-3 py-1.5 font-sans text-xl font-extrabold leading-relaxed tracking-wide break-words border-l-4 border-amber-600 shadow-sm" style={{ color: "#3b2410", background: "linear-gradient(135deg, #fff1b8 0%, #f7d98b 100%)", textShadow: "0 1px 0 rgba(255,255,255,0.35)", fontFamily: "\"Noto Sans JP\", \"Yu Gothic\", \"Meiryo\", sans-serif" }}>{selectedQuest.name}</h3>
                         </div>
                         <span className="shrink-0 rounded border border-stone-600 px-2 py-1 text-xs text-amber-300">経験点 {selectedQuest.exp}</span>
                       </div>
@@ -1151,7 +1151,7 @@ export default function App() {
                           style={{ border: "2px solid #065f46", boxSizing: "border-box", display: "inline-block", width: "fit-content", maxWidth: "100%" }}
                         >
                           <div className="flex flex-wrap items-center justify-between gap-2">
-                            <h3 className="font-bold text-emerald-300">{pData.name}：{publicQuest.name}</h3>
+                            <h3 className="inline-block rounded-md px-3 py-1.5 font-sans font-extrabold leading-relaxed tracking-wide break-words border-l-4 border-amber-600 shadow-sm" style={{ color: "#3b2410", background: "linear-gradient(135deg, #fff1b8 0%, #f7d98b 100%)", textShadow: "0 1px 0 rgba(255,255,255,0.35)", fontFamily: "\"Noto Sans JP\", \"Yu Gothic\", \"Meiryo\", sans-serif" }}>{pData.name}：{publicQuest.name}</h3>
                             <span className="text-xs border border-emerald-800 rounded px-2 py-1 text-emerald-300">公開中 (クリックでコピー)</span>
                           </div>
                           <p className="text-xs text-stone-400">公開条件：{publicQuest.condition} ／ 経験点：{publicQuest.exp}</p>
