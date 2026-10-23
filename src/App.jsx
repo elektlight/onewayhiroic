@@ -950,7 +950,17 @@ export default function App() {
                                 ev.isRevealed ? (
                                   <div className="space-y-1.5">
                                     <div className="text-[9px] text-amber-400 font-bold tracking-wide">{ev.category}</div>
-                                    <div className="font-bold text-stone-100 text-xs">{ev.title}</div>
+                                    <div
+                                      className="font-sans font-extrabold text-sm leading-relaxed tracking-wide rounded-md px-2 py-1.5 border-l-4 border-amber-400 shadow-sm break-words"
+                                      style={{
+                                        color: "#3b2410",
+                                        background: "linear-gradient(90deg, #fff1c2, #f5e4b5)",
+                                        textShadow: "none",
+                                        fontFamily: '"Noto Sans JP", "Yu Gothic", "Meiryo", sans-serif'
+                                      }}
+                                    >
+                                      {ev.title}
+                                    </div>
                                     <div className="text-[10px] text-stone-300 bg-stone-900 p-1.5 rounded border border-stone-800">
                                       <span className="text-amber-400 font-bold">判定:</span> {ev.check}
                                     </div>
