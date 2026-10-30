@@ -938,7 +938,7 @@ export default function App() {
                         onChange={(e) => setMinGuarantees({ ...minGuarantees, [item.id]: Number(e.target.value) })}
                         className="bg-stone-100 border border-stone-300 rounded px-1.5 py-0.5 text-xs font-bold"
                       >
-                        {[0, 1, 2, 3, 4, 5].map(n => (
+                        {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => (
                           <option key={n} value={n}>{n} 個</option>
                         ))}
                       </select>
