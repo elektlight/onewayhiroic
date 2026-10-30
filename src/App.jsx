@@ -19,7 +19,7 @@ import {
 import { 
   Dices, Shield, Zap, Coins, Users, Lock, Eye, EyeOff, 
   Sparkles, BookOpen, Compass, ChevronRight, UserCheck, RefreshCw, 
-  Award, AlertTriangle, Sword, MessageSquare, Play, Trophy, MapPin, Search, LogOut, Trash2, CheckCircle2
+  Award, AlertTriangle, Sword, MessageSquare, Play, Trophy, MapPin, Search, LogOut, Trash2, CheckCircle2, Sliders, Map
 } from 'lucide-react';
 
 // Firebase Configuration Setup
@@ -110,7 +110,6 @@ const QUEST_CARDS = [
   { id: 48, name: "牙の守護者", condition: "六日目に到達する", exp: 15, target: "戦闘", judge: "死雲の騎士を打ち倒す。", clear: "戦闘に勝利する", reward: "伝説P 40 / 牙の剣" }
 ];
 
-// ランダムイベント表と各遭遇表
 const rollDie = (sides = 6) => Math.floor(Math.random() * sides) + 1;
 const rollTwoD6 = () => rollDie(6) + rollDie(6);
 
@@ -195,6 +194,57 @@ function makeEvent(category, title, detail, check = "表の指定に従う", rol
   return { category, title, detail, check, judge: "参照表のジャッジに従って描写する。", rolls, isRevealed: false, revealedBy: null };
 }
 
+function generateSpecificEvent(targetKey, day, terrain) {
+  if (targetKey === 'dungeon') {
+    let n = rollDie(6);
+    if (day >= 4) n += 1;
+    if (n <= 2) return makeEvent("ダンジョン表", "犬小屋", "犬小屋イベント。知力判定。成功すると野犬1D6体と戦闘し勝利で鉄の箱。失敗すると野犬1D6体とオオカミ1D6体と戦闘し勝利で木の箱。", "知力", `指定作成（ダンジョン表: ${n}）`);
+    if (n === 7) return makeEvent("ダンジョン表", "牢獄つきダンジョン", "牢獄遭遇表（2D6）を使用する。", "牢獄遭遇表", `指定作成（ダンジョン表: 7）`);
+    const size = n === 3 || n === 4 ? "小型" : n === 5 ? "中型" : "大型";
+    const bonus = n === 5 ? "モンスター数+1、イベント経験値+1。" : n === 6 ? "モンスター数+2、イベント経験値+2。" : "";
+    const d = rollTwoD6();
+    const [title, detail] = DUNGEON_TABLE[d];
+    return makeEvent("ダンジョン表", `${size}ダンジョン：${title}`, `${detail} ${bonus}`, "ダンジョン遭遇表の指定判定", `指定作成（ダンジョン表: ${n} / 2D6: ${d}）`);
+  }
+
+  if (targetKey === 'town') {
+    const isBig = Math.random() < 0.5;
+    const title = isBig ? "大きな街" : "小さな村";
+    let detail = isBig ? "「村遭遇表」を2回振り、好きな結果を選ぶ。" : "「村遭遇表」を振る。";
+    if (isBig) {
+      const a = rollTwoD6(), b = rollTwoD6();
+      detail += ` 村遭遇表の出目は ${a}（${VILLAGE_TABLE[a][0]}）、${b}（${VILLAGE_TABLE[b][0]}）。好きな結果を選ぶ。`;
+    } else {
+      const v = rollTwoD6();
+      detail += ` 出目${v}: ${VILLAGE_TABLE[v][0]}。${VILLAGE_TABLE[v][1]}`;
+    }
+    return makeEvent("施設表", title, detail, "施設表の指定判定", "指定作成（最低保証設定）");
+  }
+
+  if (targetKey === 'shrine') {
+    return makeEvent("施設表", "聖なる神殿", FACILITY_TABLE[2][1], "施設表の指定判定", "指定作成（最低保証設定）");
+  }
+
+  if (targetKey === 'guild') {
+    return makeEvent("施設表", "闇ギルド", FACILITY_TABLE[12][1], "施設表の指定判定", "指定作成（最低保証設定）");
+  }
+
+  const villageEntry = {
+    item: { title: "道具屋", entry: VILLAGE_TABLE[7] },
+    weapon: { title: "武器屋", entry: VILLAGE_TABLE[6] },
+    armor: { title: "防具屋", entry: VILLAGE_TABLE[8] },
+    auris: { title: "占い師アウリス", entry: VILLAGE_TABLE[9] },
+    food: { title: "料理屋", entry: VILLAGE_TABLE[5] }
+  }[targetKey];
+
+  if (villageEntry) {
+    const detail = `小さな村（指定配置：${villageEntry.title}）。${villageEntry.entry[1]}`;
+    return makeEvent("施設表", `小さな村（${villageEntry.title}）`, detail, "施設表の指定判定", "指定作成（最低保証設定）");
+  }
+
+  return generateOneEvent(day, terrain);
+}
+
 function generateOneEvent(day, terrain) {
   const mainRoll = rollDie(6);
   let category = "";
@@ -263,19 +313,10 @@ function generateOneEvent(day, terrain) {
     const size = n === 3 || n === 4 ? "小型" : n === 5 ? "中型" : "大型";
     const bonus = n === 5 ? "モンスター数+1、イベント経験値+1。" : n === 6 ? "モンスター数+2、イベント経験値+2。" : "";
     const d = rollTwoD6();
-    const [title, detail, exp] = DUNGEON_TABLE[d];
+    const [title, detail] = DUNGEON_TABLE[d];
     return makeEvent(category, `${size}ダンジョン：${title}`, `${detail} ${bonus}`, "ダンジョン遭遇表の指定判定", rolls + ` / ダンジョン表: ${n} / ダンジョン遭遇表2D6: ${d}`);
   }
   return makeEvent(category, category, "結果を確認してください。", "", rolls);
-}
-
-function generateDayEvents(day, terrain) {
-  const positions = ['north', 'center', 'south'];
-  const dayEvents = {};
-  positions.forEach((pos) => {
-    dayEvents[pos] = generateOneEvent(day, terrain);
-  });
-  return dayEvents;
 }
 
 export default function App() {
@@ -286,6 +327,31 @@ export default function App() {
   const [roomName, setRoomName] = useState('');
   const [maxPlayers, setMaxPlayers] = useState(4);
   const [totalDays, setTotalDays] = useState(4);
+
+  // 地形設定のモード (random: 完全ランダム, custom: 指定)
+  const [terrainMode, setTerrainMode] = useState('random');
+  // 日付ごとの直接指定地形設定オブジェクト（'random' の場合はランダム決定）
+  const [customTerrains, setCustomTerrains] = useState({
+    1: 'random',
+    2: 'random',
+    3: 'random',
+    4: 'random',
+    5: 'random',
+    6: 'random'
+  });
+
+  // 最低配置保証の個数設定
+  const [minGuarantees, setMinGuarantees] = useState({
+    town: 0,    // 大きな街 / 小さな村
+    dungeon: 0, // ダンジョン表
+    shrine: 0,  // 聖なる神殿
+    guild: 0,   // 闇ギルド
+    item: 0,    // 道具屋
+    weapon: 0,  // 武器屋
+    armor: 0,   // 防具屋
+    auris: 0,   // 占い師アウリス
+    food: 0     // 料理屋
+  });
 
   const [roomData, setRoomData] = useState(null);
   const [availableRooms, setAvailableRooms] = useState([]);
@@ -314,7 +380,6 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // 公開ルーム一覧をリアルタイム購読
   useEffect(() => {
     if (!user) return;
     const roomsRef = collection(db, 'artifacts', appId, 'public', 'data', 'rooms');
@@ -338,7 +403,6 @@ export default function App() {
         setRoomData(data);
         setSelectedQuestId(data.players?.[user.uid]?.questId ?? null);
       } else {
-        // ホストが部屋を削除した場合、参加者側もロビーへ戻す
         setJoinedRoom(false);
         setRoomData(null);
         setRoomId('');
@@ -362,24 +426,71 @@ export default function App() {
     setTimeout(() => setCopyNotification(''), 2000);
   };
 
+  // 部屋作成時：ランダム/指定の地形、および最低保証イベントを反映してマップを構築
   const handleCreateRoom = async () => {
     if (!playerName.trim()) return alert("プレイヤー名を入力してください");
     const newRoomId = Math.random().toString(36).substring(2, 8).toUpperCase();
     
     const initialTerrains = {};
-    const initialEvents = {};
     const daysNum = Number(totalDays);
 
+    // 地形設定の反映（ランダム or 直接指定／個別指定がrandomの場合は表で決定）
     for (let d = 1; d <= daysNum; d++) {
-      let tableKey = 'day1_2';
-      if (d === 3) tableKey = 'day3';
-      else if (d === 4) tableKey = 'day4';
-      else if (d >= 5) tableKey = 'day5_6';
+      const customVal = customTerrains[d] || 'random';
+      if (terrainMode === 'custom' && customVal !== 'random') {
+        initialTerrains[d] = customVal;
+      } else {
+        let tableKey = 'day1_2';
+        if (d === 3) tableKey = 'day3';
+        else if (d === 4) tableKey = 'day4';
+        else if (d >= 5) tableKey = 'day5_6';
 
-      const diceRes = rollDice(2);
-      initialTerrains[d] = TERRAIN_TABLES[tableKey][diceRes.sum];
-      initialEvents[d] = generateDayEvents(d, initialTerrains[d]);
+        const diceRes = rollDice(2);
+        initialTerrains[d] = TERRAIN_TABLES[tableKey][diceRes.sum];
+      }
     }
+
+    // 全マスの座標リストを作成
+    const allSlots = [];
+    for (let d = 1; d <= daysNum; d++) {
+      ['north', 'center', 'south'].forEach(pos => {
+        allSlots.push({ day: d, pos });
+      });
+    }
+
+    // シャッフル
+    const shuffledSlots = [...allSlots].sort(() => Math.random() - 0.5);
+
+    // 最低保証要求リストの作成
+    const guaranteeQueue = [];
+    Object.entries(minGuarantees).forEach(([key, count]) => {
+      for (let i = 0; i < count; i++) {
+        guaranteeQueue.push(key);
+      }
+    });
+
+    if (guaranteeQueue.length > allSlots.length) {
+      alert(`指定されたイベントの合計個数（${guaranteeQueue.length}個）が全マップマス数（${allSlots.length}マス）を超えています。配置数を減らしてください。`);
+      return;
+    }
+
+    const initialEvents = {};
+    for (let d = 1; d <= daysNum; d++) {
+      initialEvents[d] = {};
+    }
+
+    // まず最低保証イベントをランダムマスに配置
+    guaranteeQueue.forEach(targetKey => {
+      const slot = shuffledSlots.pop();
+      const terrain = initialTerrains[slot.day];
+      initialEvents[slot.day][slot.pos] = generateSpecificEvent(targetKey, slot.day, terrain);
+    });
+
+    // 残りのマスを通常の完全ランダムで埋める
+    shuffledSlots.forEach(slot => {
+      const terrain = initialTerrains[slot.day];
+      initialEvents[slot.day][slot.pos] = generateOneEvent(slot.day, terrain);
+    });
 
     const resolvedRoomName = roomName.trim() || `冒険の部屋 ${newRoomId}`;
     const newRoomState = {
@@ -469,7 +580,7 @@ export default function App() {
       }
     } catch (error) {
       console.error('Delete room error:', error);
-      alert(`部屋の削除に失敗しました。\nエラーコード: ${error.code || '不明'}\n詳細: ${error.message || '詳細情報はありません'}\nFirestoreのセキュリティルールとホスト権限を確認してください。`);
+      alert(`部屋の削除に失敗しました。`);
     }
   };
 
@@ -698,6 +809,9 @@ export default function App() {
   };
 
   if (!joinedRoom || !roomData) {
+    const daysNum = Number(totalDays);
+    const dayOptions = Array.from({ length: daysNum }, (_, i) => i + 1);
+
     return (
       <div className="min-h-screen text-stone-800 p-4 md:p-8" style={{background:'linear-gradient(135deg,#e8e2ce 0%,#f7f3e8 48%,#d8dfc9 100%)'}}>
         <div className="max-w-5xl mx-auto">
@@ -710,57 +824,150 @@ export default function App() {
             <p className="mt-4 text-sm md:text-base text-stone-600">イベント・地形ランダム決定ツール</p>
           </header>
 
-          <div className="grid lg:grid-cols-[0.85fr_1.15fr] gap-5 items-start">
-            <section className="bg-white/80 backdrop-blur rounded-2xl border border-emerald-950/15 p-5 md:p-6 shadow-xl">
-              <div className="flex items-center gap-2 mb-5">
+          <div className="grid lg:grid-cols-[1.1fr_0.9fr] gap-6 items-start">
+            {/* 部屋作成フォーム */}
+            <section className="bg-white/80 backdrop-blur rounded-2xl border border-emerald-950/15 p-5 md:p-6 shadow-xl space-y-4">
+              <div className="flex items-center gap-2 mb-2">
                 <Sparkles className="w-5 h-5 text-amber-700" />
-                <h2 className="text-xl font-bold text-emerald-950">冒険の準備</h2>
+                <h2 className="text-xl font-bold text-emerald-950">新しい部屋を作成</h2>
               </div>
-              <label className="block text-sm font-bold text-stone-600 mb-2">プレイヤー名</label>
-              <input type="text" value={playerName} onChange={(e) => setPlayerName(e.target.value)}
-                placeholder="例：勇者オルフェ" maxLength={30}
-                className="w-full bg-stone-50 border border-stone-300 rounded-xl p-3 text-stone-800 outline-none focus:ring-2 focus:ring-emerald-700 mb-4" />
-              <label className="block text-sm font-bold text-stone-600 mb-2">ルーム名</label>
-              <input type="text" value={roomName} onChange={(e) => setRoomName(e.target.value)}
-                placeholder="例：はじめての片道勇者／金曜夜の冒険" maxLength={40}
-                className="w-full bg-stone-50 border border-stone-300 rounded-xl p-3 text-stone-800 outline-none focus:ring-2 focus:ring-emerald-700 mb-2" />
-              <p className="text-xs text-stone-500 mb-5">未入力の場合は、自動で「冒険の部屋 ＋部屋コード」という名前になります。</p>
-              <div className="grid grid-cols-2 gap-3 mb-5">
+              
+              <div>
+                <label className="block text-xs font-bold text-stone-600 mb-1">プレイヤー名</label>
+                <input type="text" value={playerName} onChange={(e) => setPlayerName(e.target.value)}
+                  placeholder="例：勇者オルフェ" maxLength={30}
+                  className="w-full bg-stone-50 border border-stone-300 rounded-xl p-2.5 text-stone-800 outline-none focus:ring-2 focus:ring-emerald-700 text-sm" />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-stone-600 mb-1">部屋名</label>
+                <input type="text" value={roomName} onChange={(e) => setRoomName(e.target.value)}
+                  placeholder="例：はじめての片道勇者" maxLength={40}
+                  className="w-full bg-stone-50 border border-stone-300 rounded-xl p-2.5 text-stone-800 outline-none focus:ring-2 focus:ring-emerald-700 text-sm" />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-bold text-stone-500 mb-1">最大人数</label>
-                  <select value={maxPlayers} onChange={(e) => setMaxPlayers(e.target.value)} className="w-full bg-stone-50 border border-stone-300 rounded-lg p-2.5">
+                  <select value={maxPlayers} onChange={(e) => setMaxPlayers(e.target.value)} className="w-full bg-stone-50 border border-stone-300 rounded-lg p-2 text-sm">
                     {[1,2,3,4,5].map(n => <option key={n} value={n}>{n} 人</option>)}
                   </select>
                 </div>
                 <div>
                   <label className="block text-xs font-bold text-stone-500 mb-1">冒険日数</label>
-                  <select value={totalDays} onChange={(e) => setTotalDays(e.target.value)} className="w-full bg-stone-50 border border-stone-300 rounded-lg p-2.5">
+                  <select value={totalDays} onChange={(e) => setTotalDays(e.target.value)} className="w-full bg-stone-50 border border-stone-300 rounded-lg p-2 text-sm">
                     {[2,4,6].map(d => <option key={d} value={d}>{d} 日間</option>)}
                   </select>
                 </div>
               </div>
-              <button onClick={handleCreateRoom} className="w-full flex items-center justify-center gap-2 bg-emerald-900 hover:bg-emerald-800 text-amber-50 font-bold py-3 px-4 rounded-xl shadow-md transition">
-                <Play className="w-4 h-4" /> 新しい冒険を始める
+
+              {/* 地形設定（ランダム or 日毎直接指定） */}
+              <div className="bg-stone-100/90 rounded-xl p-3.5 border border-stone-300 space-y-3">
+                <div className="flex items-center justify-between border-b border-stone-300 pb-2">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-900">
+                    <span>地形決定方式</span>
+                  </div>
+                  <div className="flex gap-1 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => setTerrainMode('random')}
+                      className={`px-2.5 py-1 rounded font-bold transition ${terrainMode === 'random' ? 'bg-emerald-800 text-amber-100 shadow' : 'bg-stone-200 text-stone-600 hover:bg-stone-300'}`}
+                    >
+                      完全ランダム
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setTerrainMode('custom')}
+                      className={`px-2.5 py-1 rounded font-bold transition ${terrainMode === 'custom' ? 'bg-emerald-800 text-amber-100 shadow' : 'bg-stone-200 text-stone-600 hover:bg-stone-300'}`}
+                    >
+                      日にち毎に指定
+                    </button>
+                  </div>
+                </div>
+
+                {terrainMode === 'custom' ? (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs pt-1">
+                    {dayOptions.map(d => (
+                      <div key={d} className="bg-white p-2 rounded border border-stone-200 space-y-1">
+                        <span className="font-bold text-stone-700 block">{d}日目の地形</span>
+                        <select
+                          value={customTerrains[d] || 'random'}
+                          onChange={(e) => setCustomTerrains({ ...customTerrains, [d]: e.target.value })}
+                          className="w-full bg-stone-50 border border-stone-300 rounded p-1 text-xs font-bold"
+                        >
+                          <option value="random">🎲 ランダム（表で決定）</option>
+                          {Object.keys(TERRAIN_DATA).map(tName => (
+                            <option key={tName} value={tName}>
+                              {TERRAIN_DATA[tName].icon} {tName}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-stone-500 leading-relaxed">
+                    ※ダイス確率表に基づいて、各日程の地形が自動生成されます。
+                  </p>
+                )}
+              </div>
+
+              {/* 最低配置保証イベントの指定オプション */}
+              <div className="bg-stone-100/90 rounded-xl p-3.5 border border-stone-300 space-y-3">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-900 border-b border-stone-300 pb-1.5">
+                  <Sliders className="w-4 h-4 text-emerald-700" />
+                  <span>マップ構築時の最低配置保証数（オプション）</span>
+                </div>
+                
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  {[
+                    { id: 'town', label: '大きな街 / 小さな村' },
+                    { id: 'dungeon', label: 'ダンジョン表イベント' },
+                    { id: 'shrine', label: '聖なる神殿' },
+                    { id: 'guild', label: '闇ギルド' },
+                    { id: 'item', label: '道具屋' },
+                    { id: 'weapon', label: '武器屋' },
+                    { id: 'armor', label: '防具屋' },
+                    { id: 'auris', label: '占い師アウリス' },
+                    { id: 'food', label: '料理屋' },
+                  ].map(item => (
+                    <div key={item.id} className="flex items-center justify-between bg-white p-1.5 rounded border border-stone-200">
+                      <span className="text-stone-700 font-medium truncate pr-1">{item.label}</span>
+                      <select 
+                        value={minGuarantees[item.id]} 
+                        onChange={(e) => setMinGuarantees({ ...minGuarantees, [item.id]: Number(e.target.value) })}
+                        className="bg-stone-100 border border-stone-300 rounded px-1.5 py-0.5 text-xs font-bold"
+                      >
+                        {[0, 1, 2, 3, 4, 5].map(n => (
+                          <option key={n} value={n}>{n} 個</option>
+                        ))}
+                      </select>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <button onClick={handleCreateRoom} className="w-full flex items-center justify-center gap-2 bg-emerald-900 hover:bg-emerald-800 text-amber-50 font-bold py-3 px-4 rounded-xl shadow-md transition text-sm">
+                <Play className="w-4 h-4" /> 新しい冒険を開始
               </button>
-              <p className="text-xs text-stone-500 mt-3 leading-relaxed">部屋を作成すると、一覧に表示されます。参加者は一覧から部屋を選んで入室できます。</p>
             </section>
 
+            {/* 部屋一覧表示 */}
             <section className="bg-white/80 backdrop-blur rounded-2xl border border-emerald-950/15 p-5 md:p-6 shadow-xl">
               <div className="flex items-center justify-between gap-3 mb-4">
                 <div>
                   <h2 className="text-xl font-bold text-emerald-950">公開中の冒険</h2>
                   <p className="text-xs text-stone-500 mt-1">参加したい部屋を選択してください</p>
                 </div>
-                <span className="text-xs rounded-full bg-emerald-100 text-emerald-900 px-3 py-1">{availableRooms.length} 部屋</span>
+                <span className="text-xs rounded-full bg-emerald-100 text-emerald-900 px-3 py-1 font-bold">{availableRooms.length} 部屋</span>
               </div>
               {availableRooms.length === 0 ? (
                 <div className="text-center rounded-xl border border-dashed border-stone-300 bg-stone-50 p-8">
                   <Compass className="w-8 h-8 mx-auto text-stone-400 mb-3" />
                   <p className="font-bold text-stone-600">現在、参加できる部屋はありません</p>
-                  <p className="text-xs text-stone-500 mt-2">新しい部屋を作成すると、ここに表示されます。</p>
                 </div>
               ) : (
-                <div className="space-y-3 max-h-[430px] overflow-y-auto pr-1">
+                <div className="space-y-3 max-h-[520px] overflow-y-auto pr-1">
                   {availableRooms.map((room) => {
                     const count = Object.keys(room.players || {}).length;
                     const full = count >= Number(room.maxPlayers || 4);
@@ -768,37 +975,34 @@ export default function App() {
                     return <div key={room.roomId} className={`rounded-xl transition ${selected ? 'bg-emerald-100/70 ring-2 ring-amber-500 ring-offset-2 ring-offset-white shadow-lg' : ''}`}>
                       <button type="button" disabled={full} onClick={() => setSelectedRoomId(room.roomId)}
                         aria-pressed={selected}
-                        className={`w-full text-left rounded-xl border-2 p-4 transition ${selected ? 'border-emerald-900 bg-emerald-50' : 'border-stone-200 bg-white hover:border-emerald-700'} ${full ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                        className={`w-full text-left rounded-xl border-2 p-3.5 transition ${selected ? 'border-emerald-900 bg-emerald-50' : 'border-stone-200 bg-white hover:border-emerald-700'} ${full ? 'opacity-50 cursor-not-allowed' : ''}`}>
                         <div className="flex items-start justify-between gap-3">
-                          <div className="flex items-start gap-3">
-                            <span className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 ${selected ? 'border-emerald-800 bg-emerald-800 text-white' : 'border-stone-300 bg-white text-transparent'}`}>
-                              <CheckCircle2 className="w-4 h-4" />
+                          <div className="flex items-start gap-2.5">
+                            <span className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 ${selected ? 'border-emerald-800 bg-emerald-800 text-white' : 'border-stone-300 bg-white text-transparent'}`}>
+                              <CheckCircle2 className="w-3.5 h-3.5" />
                             </span>
                             <div>
-                              <div className="font-bold text-emerald-950">{room.roomName || `冒険の部屋 ${room.roomId}`}</div>
-                              <div className="text-xs text-stone-500 mt-1">部屋コード：{room.roomId}</div>
+                              <div className="font-bold text-emerald-950 text-sm">{room.roomName || `冒険の部屋 ${room.roomId}`}</div>
+                              <div className="text-xs text-stone-500">コード：{room.roomId}</div>
                             </div>
                           </div>
-                          <span className={`shrink-0 text-xs font-bold rounded-full px-2.5 py-1 ${full ? 'bg-rose-100 text-rose-800' : 'bg-emerald-100 text-emerald-900'}`}>{full ? '満員' : '参加可能'}</span>
+                          <span className={`shrink-0 text-[10px] font-bold rounded-full px-2 py-0.5 ${full ? 'bg-rose-100 text-rose-800' : 'bg-emerald-100 text-emerald-900'}`}>{full ? '満員' : '参加可能'}</span>
                         </div>
-                        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-stone-600 mt-3 pl-9">
+                        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-stone-600 mt-2 pl-7">
                           <span className="inline-flex items-center gap-1"><Users className="w-3.5 h-3.5" /> {count}/{room.maxPlayers || 4} 人</span>
-                          <span>{room.totalDays || 4} 日間の冒険</span>
-                          <span>{room.phase === 'playing' ? '冒険中' : '参加者募集中'}</span>
+                          <span>{room.totalDays || 4} 日間</span>
                         </div>
-                        {selected && <div className="mt-3 ml-9 inline-flex items-center gap-1 rounded-full bg-emerald-900 px-3 py-1 text-xs font-extrabold text-amber-100"><CheckCircle2 className="w-3.5 h-3.5" /> 入室対象に選択中</div>}
                       </button>
-                      {room.hostId === user?.uid && <button type="button" onClick={() => handleDeleteRoom(room.roomId)} className="mt-2 inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-bold text-rose-700 hover:bg-rose-100"><Trash2 className="w-3.5 h-3.5" /> この部屋を削除</button>}
+                      {room.hostId === user?.uid && <button type="button" onClick={() => handleDeleteRoom(room.roomId)} className="mt-1.5 inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1 text-xs font-bold text-rose-700 hover:bg-rose-100"><Trash2 className="w-3.5 h-3.5" /> この部屋を削除</button>}
                     </div>;
                   })}
                 </div>
               )}
-              <button onClick={handleJoinRoom} disabled={!selectedRoomId || (() => { const selected = availableRooms.find((r) => r.roomId === selectedRoomId); return !selected || Object.keys(selected.players || {}).length >= Number(selected.maxPlayers || 4); })()} className="w-full mt-4 bg-amber-700 hover:bg-amber-600 disabled:bg-stone-300 disabled:text-stone-500 text-white font-bold py-3 rounded-xl transition">
-                {selectedRoomId ? '✓ 選択した部屋に参加する' : 'まず参加する部屋を選択してください'}
+              <button onClick={handleJoinRoom} disabled={!selectedRoomId} className="w-full mt-4 bg-amber-700 hover:bg-amber-600 disabled:bg-stone-300 disabled:text-stone-500 text-white font-bold py-3 rounded-xl transition text-sm">
+                {selectedRoomId ? '✓ 選択した部屋に参加する' : '部屋を選択してください'}
               </button>
             </section>
           </div>
-          <p className="text-center text-xs text-stone-500 mt-8">※削除できるのは自分が立てた部屋のみ</p>
         </div>
       </div>
     );
@@ -811,7 +1015,6 @@ export default function App() {
   return (
     <div className="min-h-screen bg-stone-950 text-stone-200 font-serif flex flex-col relative">
       
-      {/* コピー完了トースト通知 */}
       {copyNotification && (
         <div className="fixed top-5 left-1/2 -translate-x-1/2 z-50 bg-emerald-800 border border-emerald-400 text-emerald-100 px-4 py-2 rounded-lg shadow-2xl text-xs font-bold animate-bounce">
           {copyNotification}
@@ -825,7 +1028,7 @@ export default function App() {
             <Sword className="w-5 h-5 text-amber-500" />
             片道勇者TRPG
           </h1>
-          <span className="bg-stone-800 border border-stone-700 px-3 py-1 rounded text-xs font-mono text-amber-300" title={`ルームID: ${roomData.roomId}`}>
+          <span className="bg-stone-800 border border-stone-700 px-3 py-1 rounded text-xs font-mono text-amber-300">
             {roomData.roomName || `冒険の部屋 ${roomData.roomId}`} ({roomData.roomId})
           </span>
         </div>
@@ -875,9 +1078,8 @@ export default function App() {
         </button>
       </div>
 
-      {/* メインコンテンツエリア */}
+      {/* メインエリア */}
       <div className="flex-1 flex flex-col overflow-y-auto">
-        
         <main className="flex-none p-4 overflow-visible space-y-6">
 
           {activeTab === 'board' && (
@@ -940,7 +1142,7 @@ export default function App() {
                           >
                             <div>
                               <div className="flex justify-between items-center border-b border-stone-800 pb-1 mb-1.5">
-                                <span className="font-bold text-[10px] text-amber-400 uppercase tracking-wider">イベントカード {ev?.isRevealed && '(クリックでコピー)'}</span>
+                                <span className="font-bold text-[10px] text-amber-400 uppercase tracking-wider">イベント {ev?.isRevealed && '(コピー可)'}</span>
                                 <span className="text-[10px] font-mono text-stone-400 bg-stone-900 px-1.5 py-0.5 rounded border border-stone-800">
                                   {posCode}
                                 </span>
@@ -1052,13 +1254,12 @@ export default function App() {
                 </div>
               </div>
 
-              {/* クエスト選択 */}
               <div className="bg-stone-900 border-2 border-stone-600 rounded-xl p-4 shadow-lg space-y-4">
                 <h2 className="text-lg font-bold text-amber-400 flex items-center gap-2">
                   <Award className="w-5 h-5" /> クエスト選択 (1～48)
                 </h2>
                 <p className="text-xs text-stone-400">
-                  クエスト名から選択できます。選択したクエストは、公開ボタンを押すまで他のプレイヤーには内容が表示されません。同じクエストは複数人で選択できません。
+                  クエスト名から選択できます。選択したクエストは、公開ボタンを押すまで他のプレイヤーには内容が表示されません。
                 </p>
 
                 <div className="space-y-2">
@@ -1097,28 +1298,28 @@ export default function App() {
                     return <div className="rounded-lg border-2 border-dashed border-stone-700 p-6 text-center text-sm text-stone-500">クエストを選択すると、ここに詳細が表示されます。</div>;
                   }
                   return (
-                    <div className="rounded-xl bg-gradient-to-br from-stone-950 via-stone-950 to-stone-900 p-5 space-y-4 shadow-lg shadow-amber-950/30 ring-1 ring-amber-300/20" style={{ border: "4px solid #f59e0b", boxSizing: "border-box", display: "inline-block", width: "fit-content", maxWidth: "100%" }}>
+                    <div className="rounded-xl bg-gradient-to-br from-stone-950 via-stone-950 to-stone-900 p-5 space-y-4 shadow-lg ring-1 ring-amber-300/20" style={{ border: "4px solid #f59e0b", boxSizing: "border-box", display: "inline-block", width: "fit-content", maxWidth: "100%" }}>
                       <div className="flex items-start justify-between gap-3 border-b border-stone-700 pb-3">
                         <div>
                           <p className="text-xs text-stone-500">クエストカード #{selectedQuest.id}</p>
-                          <h3 className="inline-block mt-1 rounded-md px-3 py-1.5 font-sans text-xl font-extrabold leading-relaxed tracking-wide break-words border-l-4 border-amber-600 shadow-sm" style={{ color: "#3b2410", background: "linear-gradient(135deg, #fff1b8 0%, #f7d98b 100%)", textShadow: "0 1px 0 rgba(255,255,255,0.35)", fontFamily: "\"Noto Sans JP\", \"Yu Gothic\", \"Meiryo\", sans-serif" }}>{selectedQuest.name}</h3>
+                          <h3 className="inline-block mt-1 rounded-md px-3 py-1.5 font-sans text-xl font-extrabold leading-relaxed tracking-wide break-words border-l-4 border-amber-600 shadow-sm" style={{ color: "#3b2410", background: "linear-gradient(135deg, #fff1b8 0%, #f7d98b 100%)" }}>{selectedQuest.name}</h3>
                         </div>
                         <span className="shrink-0 rounded border border-stone-600 px-2 py-1 text-xs text-amber-300">経験点 {selectedQuest.exp}</span>
                       </div>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                        <div className="rounded-lg bg-stone-900 p-3" style={{ border: "2px solid #78716c", boxSizing: "border-box" }}>
+                        <div className="rounded-lg bg-stone-900 p-3" style={{ border: "2px solid #78716c" }}>
                           <h4 className="text-xs font-bold text-amber-400 mb-1">公開条件</h4>
                           <p className="text-sm text-stone-200">{selectedQuest.condition}</p>
                         </div>
-                        <div className="rounded-lg bg-stone-900 p-3" style={{ border: "2px solid #78716c", boxSizing: "border-box" }}>
+                        <div className="rounded-lg bg-stone-900 p-3" style={{ border: "2px solid #78716c" }}>
                           <h4 className="text-xs font-bold text-amber-400 mb-1">目標・イベント</h4>
                           <p className="text-sm text-stone-200"><strong>[目標 {selectedQuest.target}]</strong> {selectedQuest.judge}</p>
                         </div>
-                        <div className="rounded-lg bg-stone-900 p-3" style={{ border: "2px solid #78716c", boxSizing: "border-box" }}>
+                        <div className="rounded-lg bg-stone-900 p-3" style={{ border: "2px solid #78716c" }}>
                           <h4 className="text-xs font-bold text-amber-400 mb-1">クリア条件</h4>
                           <p className="text-sm text-stone-200">{selectedQuest.clear}</p>
                         </div>
-                        <div className="rounded-lg bg-stone-900 p-3" style={{ border: "2px solid #78716c", boxSizing: "border-box" }}>
+                        <div className="rounded-lg bg-stone-900 p-3" style={{ border: "2px solid #78716c" }}>
                           <h4 className="text-xs font-bold text-amber-400 mb-1">報酬</h4>
                           <p className="text-sm font-bold text-amber-300">{selectedQuest.reward}</p>
                         </div>
@@ -1128,7 +1329,6 @@ export default function App() {
                 })()}
               </div>
 
-              {/* 公開済みクエスト（クリックでコピー機能付き） */}
               <div className="bg-stone-900 border-2 border-stone-600 rounded-xl p-4 shadow-lg space-y-3">
                 <h2 className="text-lg font-bold text-amber-400 flex items-center gap-2">
                   <Eye className="w-5 h-5" /> 公開されたクエスト (クリックでコピー)
@@ -1148,10 +1348,10 @@ export default function App() {
                             showCopyToast(copyText);
                           }}
                           className="rounded-xl bg-stone-950 p-4 space-y-2 cursor-pointer hover:border-emerald-400 transition" 
-                          style={{ border: "2px solid #065f46", boxSizing: "border-box", display: "inline-block", width: "fit-content", maxWidth: "100%" }}
+                          style={{ border: "2px solid #065f46", display: "inline-block", width: "fit-content", maxWidth: "100%" }}
                         >
                           <div className="flex flex-wrap items-center justify-between gap-2">
-                            <h3 className="inline-block rounded-md px-3 py-1.5 font-sans font-extrabold leading-relaxed tracking-wide break-words border-l-4 border-amber-600 shadow-sm" style={{ color: "#3b2410", background: "linear-gradient(135deg, #fff1b8 0%, #f7d98b 100%)", textShadow: "0 1px 0 rgba(255,255,255,0.35)", fontFamily: "\"Noto Sans JP\", \"Yu Gothic\", \"Meiryo\", sans-serif" }}>{pData.name}：{publicQuest.name}</h3>
+                            <h3 className="inline-block rounded-md px-3 py-1.5 font-sans font-extrabold leading-relaxed text-sm" style={{ color: "#3b2410", background: "linear-gradient(135deg, #fff1b8 0%, #f7d98b 100%)" }}>{pData.name}：{publicQuest.name}</h3>
                             <span className="text-xs border border-emerald-800 rounded px-2 py-1 text-emerald-300">公開中 (クリックでコピー)</span>
                           </div>
                           <p className="text-xs text-stone-400">公開条件：{publicQuest.condition} ／ 経験点：{publicQuest.exp}</p>
@@ -1171,7 +1371,7 @@ export default function App() {
 
         </main>
 
-        {/* 下部に固定配置された共有ダイス & ログ・チャットエリア */}
+        {/* 共有ダイス & チャット */}
         <section className="bg-stone-900 border-2 border-stone-600 rounded-xl p-3 flex flex-col min-h-56 h-64 shrink-0 shadow-2xl">
           <div className="flex items-center justify-between pb-2 mb-2 border-b border-stone-800">
             <span className="text-xs font-bold text-amber-400 flex items-center gap-1">
@@ -1197,7 +1397,7 @@ export default function App() {
             {roomData.logs?.map((log) => (
               <div key={log.id} className="bg-stone-950 p-1.5 rounded-md border border-stone-600 flex items-start gap-2">
                 <span className="text-[10px] text-stone-500 shrink-0 pt-0.5">{log.time}</span>
-                <span className="font-bold text-amber-500 shrink0">{log.sender}:</span>
+                <span className="font-bold text-amber-500 shrink-0">{log.sender}:</span>
                 <span className="text-stone-300 font-sans">{log.text}</span>
               </div>
             ))}
